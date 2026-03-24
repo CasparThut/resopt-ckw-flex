@@ -1,0 +1,1 @@
+res_opt_core[highs] @ git+https://github.com/axpogroup/res_opt_core-axpo
