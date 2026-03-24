@@ -15,8 +15,7 @@ from pyomo.core.expr import RelationalExpression
 import numpy as np
 from numpy.typing import NDArray
 
-def test():
-    return print("test")
+
 
 class EVInputs(ComponentInputs):
     """EV inputs
