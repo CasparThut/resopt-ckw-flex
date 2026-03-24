@@ -1,3 +1,0 @@
-data
-hems_resopt
-notebooks
