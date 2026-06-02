@@ -278,7 +278,8 @@ def get_e_in_out_capacity(
         # Focus on kWh per Session, start-, end- and e_cap are only relevant for the optimization to work smoothly
         # assumption car will always be full when leaving
         session_e_in  = max(0.0, batt - kWh_session)
-        session_e_out = batt
+        session_e_out = batt - 0.1
+
         
         # session_e_in, session_e_out, capacity_df[cid] = check_feasibility_of_session(session_e_in, session_e_out, charger_cap_series) # not needed as restrictions can't be violated like this
 

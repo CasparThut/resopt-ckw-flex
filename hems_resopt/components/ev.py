@@ -265,7 +265,7 @@ class EV(Asset, SocManagementInterface, ReserveProviderInterface):
         constraints += [
             self.var_power[k] - self.var_power_max_violation[k]
             <= (self.inputs.power_max[k] - self.var_power_reserve_up[k])
-            for k in self.horizon
+        for k in self.horizon
         ]
 
         if self.inputs.cost_max_power_violation is None:

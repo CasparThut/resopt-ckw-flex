@@ -1,8 +1,39 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 from typing import Tuple, Dict
+import matplotlib as mpl
+
+# Set default plot properties (rcParams)
+plt.rcParams['figure.figsize'] = [15, 8]  # Set the default figure size (width, height)
+plt.rcParams['figure.dpi'] = 300  # Set the resolution (300 DPI for high-quality output)
+plt.rcParams['lines.linewidth'] = 1     # Set default line width
+plt.rcParams['lines.color'] = 'b'         # Set default line color (blue in this case)
+plt.rcParams['axes.grid'] = True 
+plt.rcParams['axes.grid.axis'] = 'y'
+plt.rcParams['grid.alpha'] = 0.3    
+plt.rcParams['axes.titlecolor'] = '#616161'
+plt.rcParams['axes.labelcolor'] = '#616161'
+plt.rcParams['xtick.color'] = '#616161'
+plt.rcParams['ytick.color'] = '#616161'
+plt.rcParams['text.color'] = '#616161'
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['axes.labelsize'] = 12
+plt.rcParams['axes.titlesize'] = 14
+plt.rcParams['xtick.labelsize'] = 10
+plt.rcParams['ytick.labelsize'] = 10
+plt.rcParams['legend.markerscale'] = 1
+plt.rcParams['legend.framealpha'] = 0.5
+plt.rcParams['axes.spines.left'] = False
+plt.rcParams['axes.spines.bottom'] = False
+plt.rcParams['axes.spines.top'] = False
+plt.rcParams['axes.spines.right'] = False
+mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=["#BCCF02", "#6C9C30", "#3E5C17", "#a7b805"]) 
+# plt.rcParams["patch.facecolor"] = "#BCCF02"
+
+plt.rcParams['figure.constrained_layout.use'] = True # alternativ zu tight_layout(). noch testen sonst deaktivieren
 
 def plot_summary_bars(summary):
     # Build series for each visual group
@@ -156,33 +187,32 @@ def plot_summary_bars(summary):
 
 
 
-def plot_charger_usage(easee_sessions, df_energy, idx, sessions=None, session_kWh_col='kiloWattHours'):
-    # --- original code unchanged ---
-    events = []
-    for _, row in easee_sessions.iterrows():
-        start = row['carConnected']
-        end = row['carDisconnected']
-        if pd.isna(start): continue
-        events.append((pd.to_datetime(start, utc=True), 1))
-        if pd.notna(end):
-            events.append((pd.to_datetime(end, utc=True), -1))
+def plot_charger_usage(easee_sessions, df_energy, idx, connection_df, sessions=None, session_kWh_col='kiloWattHours'):
+    """
+    Plot charger usage diagnostics.
 
-    if events:
-        ev_df = pd.DataFrame(events, columns=['time','delta'])
-        ev_df = ev_df.groupby('time')['delta'].sum().sort_index()  # aggregate duplicates
-        concurrent = ev_df.cumsum()
-        # reindex to full idx and forward-fill
-        changes = concurrent.reindex(idx, method='ffill').fillna(0).astype(int)
-    else:
-        changes = pd.Series(0, index=idx)
+    Parameters
+    ----------
+    easee_sessions  : Raw Easee sessions DataFrame (carConnected / carDisconnected).
+    df_energy       : Optimisation output DataFrame with 'energy_charged' column.
+    idx             : Full 15-minute DatetimeIndex for the optimisation horizon.
+    connection_df   : Binary (0/1) DataFrame [idx x charger_ids] from build_connection_df().
+    sessions        : Prepared sessions DataFrame (used for daily energy comparison).
+    session_kWh_col : Column name in sessions holding per-session energy [kWh].
+    """
 
-    fig, axes = plt.subplots(3,1, figsize=(14,12), constrained_layout=True)  # changed to 3 rows
+    # ── Subplot 1: Concurrent active charging sessions ────────────────────────
+    # Sum across all charger columns → number of connected chargers at each timestep
+    concurrent = connection_df.sum(axis=1)  # pd.Series aligned to idx
+
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12), constrained_layout=True)
     ax = axes[0]
-    ax.plot(changes.index, changes.values, color="#3E5C17")
-    ax.set_title("Concurrent chargers (in use) over time")
-    ax.set_ylabel("Number of chargers")
+    ax.plot(concurrent.index, concurrent.values, color="#3E5C17")
+    ax.set_title("Concurrent active charging sessions over time")
+    ax.set_ylabel("Number of active sessions")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
 
+    # ── Subplot 2: Session duration distribution ──────────────────────────────
     durations = (easee_sessions['carDisconnected'] - easee_sessions['carConnected']).dt.total_seconds().div(3600).dropna()
     ax2 = axes[1]
     ax2.hist(durations.clip(upper=24), bins=30, color="#6C9C30", alpha=0.8)
@@ -190,15 +220,12 @@ def plot_charger_usage(easee_sessions, df_energy, idx, sessions=None, session_kW
     ax2.set_ylabel("Count")
     ax2.set_title("Session duration distribution (capped at 24h)")
 
-    # --- NEW: Daily energy comparison subplot (keeps everything else the same) ---
+    # ── Subplot 3: Daily energy — Optimized vs Sessions ───────────────────────
     ax3 = axes[2]
 
-    # daily optimized energy from df_energy (assumes energy_charged in kWh per 15-min)
     daily_opt = df_energy['energy_charged'].fillna(0).resample('D').sum()
 
-    # daily sessions energy from sessions DataFrame (use provided sessions argument or fallback)
     if sessions is None:
-        # try common variable name 'sessions' from outer scope
         try:
             sess_df = globals().get('sessions', None)
         except Exception:
@@ -207,36 +234,30 @@ def plot_charger_usage(easee_sessions, df_energy, idx, sessions=None, session_kW
         sess_df = sessions
 
     if sess_df is not None and session_kWh_col in sess_df.columns:
-        # use carConnected date as day bucket
         sess_days = sess_df.copy()
         sess_days['day'] = sess_days['carConnected'].dt.normalize()
         daily_sess = sess_days.groupby('day')[session_kWh_col].sum()
-        # reindex to cover full daily index of the optimization horizon
         daily_index = pd.date_range(start=idx[0].normalize(), end=idx[-1].normalize(), freq='D', tz=idx.tz)
         daily_sess = daily_sess.reindex(daily_index, fill_value=0)
     else:
-        # no sessions data available -> empty zero series matching daily_opt index
         daily_index = daily_opt.index.union(pd.date_range(start=idx[0].normalize(), end=idx[-1].normalize(), freq='D', tz=idx.tz))
         daily_sess = pd.Series(0.0, index=daily_index)
 
-    # align both series to same index (use the union)
     all_days = daily_opt.index.union(daily_sess.index).sort_values()
-    daily_opt = daily_opt.reindex(all_days, fill_value=0)
+    daily_opt  = daily_opt.reindex(all_days, fill_value=0)
     daily_sess = daily_sess.reindex(all_days, fill_value=0)
 
-    # plot side-by-side bars
-    x = np.arange(len(all_days))
+    x     = np.arange(len(all_days))
     width = 0.4
-    ax3.bar(x - width/2, daily_opt.values, width=width, label='Optimized energy charged (kWh/day)', color='#3E5C17')
-    ax3.bar(x + width/2, daily_sess.values, width=width, label='Sessions energy (kWh/day)', color='#BCCF02', alpha=0.9)
+    ax3.bar(x - width/2, daily_opt.values,  width=width, label='Optimized energy charged (kWh/day)', color='#3E5C17')
+    ax3.bar(x + width/2, daily_sess.values, width=width, label='Sessions energy (kWh/day)',           color='#BCCF02', alpha=0.9)
 
-    # format x ticks sparsely to avoid crowding
     if len(all_days) > 12:
-        step = max(1, len(all_days)//12)
-        xticks = x[::step]
+        step        = max(1, len(all_days) // 12)
+        xticks      = x[::step]
         xticklabels = [all_days[i].strftime('%Y-%m-%d') for i in xticks]
     else:
-        xticks = x
+        xticks      = x
         xticklabels = [d.strftime('%Y-%m-%d') for d in all_days]
 
     ax3.set_xticks(xticks)
@@ -246,6 +267,7 @@ def plot_charger_usage(easee_sessions, df_energy, idx, sessions=None, session_kW
     ax3.legend()
 
     plt.show()
+
 
 
 
@@ -311,8 +333,10 @@ def compute_ev_optimization_summary(
     idx: pd.DatetimeIndex,
     sessions: pd.DataFrame,
     capped_kWh_list: list,
-    peak_power_price: float = 10.0,
-    energy_costs: float = 0.2
+    peak_power_price_dyn: float = 1.0,
+    peak_power_price_stat: float = 1.5,
+    energy_costs: float = 0.11,
+    fix_costs: float = 0.07226,
 ) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame]:
     """
     Compute post-processing metrics for EV charging optimization.
@@ -373,31 +397,33 @@ def compute_ev_optimization_summary(
 
     # 2. Monthly peaks and peak costs
     peaks_month = df['power_charged'].resample('ME').max()
-    peak_costs  = peaks_month * peak_power_price
+    peak_costs_opt  = peaks_month * peak_power_price_dyn
+    peak_costs_stand = peaks_month * peak_power_price_stat
 
     # 3. Total optimized costs
     energy_costs_grid_opt = df['charging_costs'].sum()
     energy_costs_elv_opt  = df['energy_charged'].sum() * energy_costs
     energy_costs_tot_opt  = energy_costs_grid_opt + energy_costs_elv_opt
-    total_peak_costs_opt  = peak_costs.sum()
-    total_costs_opt       = energy_costs_grid_opt + energy_costs_elv_opt + total_peak_costs_opt
+    fix_costs_kWh         = df['energy_charged'].sum() * fix_costs
+    total_peak_costs_opt  = peak_costs_opt.sum()
+    total_costs_opt       = energy_costs_grid_opt + energy_costs_elv_opt + total_peak_costs_opt + fix_costs_kWh
 
     # 4. Baseline (flat tariff)
     peaks_month_stand = peaks_month
-    total_peak_costs_stand = (peaks_month_stand * peak_power_price).sum()
+    total_peak_costs_stand = peak_costs_stand.sum()
     total_energy_charged = df['energy_charged'].sum()
     energy_costs_grid_stand = total_energy_charged * fixed_grid_costs
     energy_costs_elv_stand  = total_energy_charged * energy_costs
-    energy_costs_tot_stand  = energy_costs_grid_stand + energy_costs_elv_stand
-    total_costs_stand = energy_costs_grid_stand + energy_costs_elv_stand + total_peak_costs_stand
+
+    total_costs_stand = energy_costs_grid_stand + energy_costs_elv_stand + total_peak_costs_stand + fix_costs_kWh
 
     # 5. Optimization savings
-    savings_opt_rl = total_costs_stand - energy_costs_tot_opt
-    savings_opt_rl_pct = (savings_opt_rl / total_costs_stand) * 100 if total_costs_stand != 0 else np.nan
-    savings_opt_incl_peak = total_costs_stand - total_costs_opt
-    savings_opt_incl_peak_pct = (savings_opt_incl_peak / total_costs_stand) * 100 if total_costs_stand != 0 else np.nan
-    savings_opt_energy = energy_costs_tot_stand - energy_costs_tot_opt
-    savings_opt_energy_pct = (savings_opt_energy / energy_costs_tot_stand) * 100 if energy_costs_tot_stand != 0 else np.nan
+    # savings_opt_rl = total_costs_stand - energy_costs_tot_opt
+    # savings_opt_rl_pct = (savings_opt_rl / total_costs_stand) * 100 if total_costs_stand != 0 else np.nan
+    # savings_opt_incl_peak = total_costs_stand - total_costs_opt
+    # savings_opt_incl_peak_pct = (savings_opt_incl_peak / total_costs_stand) * 100 if total_costs_stand != 0 else np.nan
+    # savings_opt_energy = energy_costs_tot_stand - energy_costs_tot_opt
+    # savings_opt_energy_pct = (savings_opt_energy / energy_costs_tot_stand) * 100 if energy_costs_tot_stand != 0 else np.nan
 
     # 6. Session energy audit
     kWh_in_sessions = sessions['kiloWattHours'].sum()
@@ -407,10 +433,12 @@ def compute_ev_optimization_summary(
     # 7. Average charging price
     avg_energy_grid_price_opt = energy_costs_grid_opt / total_energy_charged if total_energy_charged != 0 else np.nan
     avg_energy_price_opt      = energy_costs_elv_opt / total_energy_charged if total_energy_charged != 0 else np.nan
-    avg_energy_tot_price_opt  = energy_costs_tot_opt / total_energy_charged if total_energy_charged != 0 else np.nan
+    avg_tot_price_opt  = total_costs_opt / total_energy_charged if total_energy_charged != 0 else np.nan
+    avg_peak_costs_opt        = total_peak_costs_opt / total_energy_charged if total_energy_charged != 0 else np.nan
     avg_energy_grid_price_stand = fixed_grid_costs
     avg_energy_price_stand      = energy_costs
-    avg_energy_tot_price_stand  = fixed_grid_costs + energy_costs
+    avg_peak_costs_stand        = total_peak_costs_stand / total_energy_charged if total_energy_charged != 0 else np.nan
+    avg_energy_tot_price_stand  = fixed_grid_costs + energy_costs + avg_peak_costs_stand + fix_costs
 
     # 8. Load profile quality
     # avoid division by zero
@@ -419,6 +447,14 @@ def compute_ev_optimization_summary(
     kWh_off_peak = df.loc[off_peak_mask, 'energy_charged'].sum()
     kWh_on_peak  = df.loc[~off_peak_mask, 'energy_charged'].sum()
     off_peak_share = (kWh_off_peak / total_energy_charged) * 100 if total_energy_charged != 0 else np.nan
+
+    # 9. Metadata of the run
+    first_session = sessions['carConnected'].min()
+    last_session = sessions['carConnected'].max()
+    number_of_sessions = len(sessions)
+    average_kWh_session = sessions['kiloWattHours'].mean()
+    involved_chargers = sessions['charger_id'].unique()
+    number_of_chargers = len(involved_chargers)
 
     # 9. Summary
     summary = {
@@ -432,31 +468,43 @@ def compute_ev_optimization_summary(
         'Energy Costs Grid Opt [CHF]'     : round(energy_costs_grid_opt, 2),
         'Energy Costs ELV Opt [CHF]'      : round(energy_costs_elv_opt, 2),
         'Peak Costs Opt [CHF]'            : round(total_peak_costs_opt, 2),
+        'Fix Costs (Abgaben etc.) [CHF]'  : round(fix_costs_kWh, 2),
         'Total Optimized Costs [CHF]'     : round(total_costs_opt, 2),
         'Energy Costs Grid (flat tariff) [CHF]': round(energy_costs_grid_stand, 2),
         'Energy Costs ELV (flat tariff) [CHF]': round(energy_costs_elv_stand, 2),
         'Peak costs (flat tariff) [CHF]'       : round(total_peak_costs_stand, 2),
         'Total costs (flat tariff) [CHF]'      : round(total_costs_stand, 2),
 
-        'Savings vs flat tariff (no peak costs for opt) [CHF]': round(savings_opt_rl, 2),
-        'Savings vs flat tariff (no peak costs for opt) [%]': round(savings_opt_rl_pct, 2),
-        'Savings vs flat tariff (incl peak costs for opt) [CHF]': round(savings_opt_incl_peak, 2),
-        'Savings vs flat tariff (incl peak costs for opt) [%]': round(savings_opt_incl_peak_pct, 2),
-        'Savings vs flat tariff (only energy) [CHF]': round(savings_opt_energy, 2),
-        'Savings vs flat tariff (only energy) [%]': round(savings_opt_energy_pct, 2),
+        # 'Savings vs flat tariff (no peak costs for opt) [CHF]': round(savings_opt_rl, 2),
+        # 'Savings vs flat tariff (no peak costs for opt) [%]': round(savings_opt_rl_pct, 2),
+        # 'Savings vs flat tariff (incl peak costs for opt) [CHF]': round(savings_opt_incl_peak, 2),
+        # 'Savings vs flat tariff (incl peak costs for opt) [%]': round(savings_opt_incl_peak_pct, 2),
+        # 'Savings vs flat tariff (only energy) [CHF]': round(savings_opt_energy, 2),
+        # 'Savings vs flat tariff (only energy) [%]': round(savings_opt_energy_pct, 2),
 
         # Prices
-        'Avg Charging Price Grid Opt [CHF/kWh]': round(avg_energy_grid_price_opt, 4),
-        'Avg Charging Price ELV Opt [CHF/kWh]' : round(avg_energy_price_opt, 4),
-        'Avg Charging Price Opt [CHF/kWh]'     : round(avg_energy_tot_price_opt, 4),
-        'Avg Charging Price Grid Standard [CHF/kWh]': round(avg_energy_grid_price_stand, 4),
-        'Avg Charging Price ELV Standard [CHF/kWh]' : round(avg_energy_price_stand, 4),
-        'Avg Charging Price Standard [CHF/kWh]'     : round(avg_energy_tot_price_stand, 4),
+        'Avg Charging Price Grid Opt [CHF/kWh]': round(avg_energy_grid_price_opt, 5),
+        'Avg Charging Price ELV Opt [CHF/kWh]' : round(avg_energy_price_opt, 5),
+        'Avg Charging Price Peak Costs Opt [CHF/kWh]': round(avg_peak_costs_opt, 5),
+        'Avg Charging Price Abgaben etc. [CHF/kWh]': round(fix_costs, 5),
+        'Avg Charging Price Opt [CHF/kWh]'     : round(avg_tot_price_opt, 5),
+        'Avg Charging Price Grid Standard [CHF/kWh]': round(avg_energy_grid_price_stand, 5),
+        'Avg Charging Price ELV Standard [CHF/kWh]' : round(avg_energy_price_stand, 5),
+        'Avg Charging Price Peak Costs Standard [CHF/kWh]': round(avg_peak_costs_stand, 5),
+        'Avg Charging Price Abgaben etc. [CHF/kWh]': round(fix_costs, 5),
+        'Avg Charging Price Standard [CHF/kWh]'     : round(avg_energy_tot_price_stand, 5),
 
         # Load profile quality
         'Peak-to-Average Ratio [-]' : round(par_optimized, 2),
         'Off-Peak Charging Share [%]': round(off_peak_share, 2),
         'On-Peak  Charging Share [%]': round(100 - off_peak_share, 2),
+
+        # Charger and session data
+        'Number of Chargers':  number_of_chargers ,
+        'Sessions': number_of_sessions,
+        'First Session' : first_session,
+        'Last Session':last_session,
+        'Average kWh per Session':average_kWh_session,
     }
 
     # Monthly breakdown
@@ -466,10 +514,12 @@ def compute_ev_optimization_summary(
     monthly['energy_costs_ELV_opt_CHF'] = df['energy_charged'].resample('ME').sum() * energy_costs
     monthly['energy_costs_ELV_stand_CHF'] = df['energy_charged'].resample('ME').sum() * energy_costs
     monthly['peak_kW'] = peaks_month
-    monthly['peak_costs_CHF'] = peak_costs
-    monthly['total_costs_optimized_CHF'] = monthly['energy_costs_grid_opt_CHF'] + monthly['energy_costs_ELV_opt_CHF'] + monthly['peak_costs_CHF']
-    monthly['total_costs_optimized_no_peak_CHF'] = monthly['energy_costs_grid_opt_CHF'] + monthly['energy_costs_ELV_opt_CHF']
-    monthly['total_costs_standard_CHF'] = monthly['energy_costs_grid_stand_CHF'] + monthly['energy_costs_ELV_stand_CHF'] + monthly['peak_costs_CHF']
+    monthly['peak_costs_opt_CHF'] = peak_costs_opt
+    monthly['peak_costs_stand_CHF'] = peak_costs_stand
+    monthly['fix_costs_CHF']            = df['energy_charged'].resample('ME').sum() * fix_costs
+    monthly['total_costs_optimized_CHF'] = monthly['energy_costs_grid_opt_CHF'] + monthly['energy_costs_ELV_opt_CHF'] + monthly['peak_costs_opt_CHF'] + monthly['fix_costs_CHF'] 
+    monthly['total_costs_standard_CHF'] = monthly['energy_costs_grid_stand_CHF'] + monthly['energy_costs_ELV_stand_CHF'] + monthly['peak_costs_stand_CHF'] + monthly['fix_costs_CHF'] 
+
 
     return df, summary, monthly
 
@@ -490,26 +540,32 @@ def print_summary(summary: dict):
         'Energy Costs Grid Opt [CHF]',
         'Energy Costs ELV Opt [CHF]',
         'Peak Costs Opt [CHF]',
+        'Fix Costs (Abgaben etc.) [CHF]',
         'Total Optimized Costs [CHF]',
         'Energy Costs Grid (flat tariff) [CHF]',
         'Energy Costs ELV (flat tariff) [CHF]',
         'Peak costs (flat tariff) [CHF]',
+        'Fix Costs (Abgaben etc.) [CHF]',
         'Total costs (flat tariff) [CHF]'
     ]
-    savings_keys = [
-        'Savings vs flat tariff (no peak costs for opt) [CHF]',
-        'Savings vs flat tariff (no peak costs for opt) [%]',
-        'Savings vs flat tariff (incl peak costs for opt) [CHF]',
-        'Savings vs flat tariff (incl peak costs for opt) [%]',
-        'Savings vs flat tariff (only energy) [CHF]',
-        'Savings vs flat tariff (only energy) [%]'
-    ]
+    # savings_keys = [
+    #     'Savings vs flat tariff (no peak costs for opt) [CHF]',
+    #     'Savings vs flat tariff (no peak costs for opt) [%]',
+    #     'Savings vs flat tariff (incl peak costs for opt) [CHF]',
+    #     'Savings vs flat tariff (incl peak costs for opt) [%]',
+    #     'Savings vs flat tariff (only energy) [CHF]',
+    #     'Savings vs flat tariff (only energy) [%]'
+    # ]
     price_keys = [
         'Avg Charging Price Grid Opt [CHF/kWh]',
         'Avg Charging Price ELV Opt [CHF/kWh]',
+        'Avg Charging Price Peak Costs Opt [CHF/kWh]',
+        'Avg Charging Price Abgaben etc. [CHF/kWh]',
         'Avg Charging Price Opt [CHF/kWh]',
         'Avg Charging Price Grid Standard [CHF/kWh]',
         'Avg Charging Price ELV Standard [CHF/kWh]',
+        'Avg Charging Price Peak Costs Standard [CHF/kWh]',
+        'Avg Charging Price Abgaben etc. [CHF/kWh]',
         'Avg Charging Price Standard [CHF/kWh]'
     ]
     load_keys = [
@@ -517,6 +573,12 @@ def print_summary(summary: dict):
         'Off-Peak Charging Share [%]',
         'On-Peak  Charging Share [%]'
     ]
+    meta_data_keys = [        # Charger and session data
+        'Number of Chargers',
+        'Sessions',
+        'First Session',
+        'Last Session',
+        'Average kWh per Session']
 
     def fmt(val, key):
         # None or nan
@@ -549,9 +611,10 @@ def print_summary(summary: dict):
     groups = [
         ("Energy", energy_keys),
         ("Costs (optimized vs flat)", cost_keys),
-        ("Savings", savings_keys),
+        # ("Savings", savings_keys),
         ("Avg Prices", price_keys),
-        ("Load profile quality", load_keys)
+        ("Load profile quality", load_keys),
+        ("Site Data", meta_data_keys)
     ]
 
     # compute column width

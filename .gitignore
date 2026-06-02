@@ -1,8 +1,73 @@
+# -------------------------
+# Project / editor
+# -------------------------
 .vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Python virtual envs
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+__pypackages__/
+
+# python artifacts
+*.py[cod]
+*$py.class
+__pycache__/
 *.egg-info/
 dist/
 build/
-pycache/
-*.pyc
-*.pyo
-*.pyd
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Databricks
+.databricks
+
+# Jupyter
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets / environment
+.env
+.env.*
+secret-*.json
+secrets.json
+
+# -------------------------
+# Data (DO NOT COMMIT)
+# -------------------------
+# Ignore top-level data folder and any data/ anywhere in the repo
+/data/
+**/data/
+data/**
+
+# Common data file formats (CSV, parquet, Feather, HDF5, SQLite, zip, tar, gz)
+*.csv
+*.parquet
+*.parq
+*.feather
+*.fst
+*.h5
+*.hdf5
+*.db
+*.sqlite
+*.sqlite3
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.7z
