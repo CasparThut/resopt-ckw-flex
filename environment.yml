@@ -1,0 +1,13 @@
+name: hems_resopt_new
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - ipopt
+  - scip
+  - mkl
+  - pyomo
+  - highspy
+  - pip
+  - pip:
+      - git+https://github.com/axpogroup/res_opt_core-axpo

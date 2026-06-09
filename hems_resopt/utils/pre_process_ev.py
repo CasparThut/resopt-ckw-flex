@@ -238,7 +238,7 @@ def get_e_in_out_capacity(
         pd.Series(battery_sizes), axis='columns')
     
     # Drop sessions smaller 0.25 hours
-    sessions = sessions[sessions['duration_hours'] > 0.25]
+    sessions = sessions[sessions['duration_hours'] > 0.5]
     capped_kWh_list = []
 
     for _, row in sessions.iterrows():
