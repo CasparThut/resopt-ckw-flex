@@ -100,12 +100,23 @@ def build_connection_df(
 
     return connection_df
 
+def build_input_dict(
+    charger_ids: list[str],
+    value: float | dict[str, float],
+) -> dict[str, float]:
+    """
+    Build a per-charger input dictionary from either a scalar or an
+    existing dict."""
 
+    if isinstance(value, dict):
+            return value                                    # already per-charger
+    return {cid: value for cid in charger_ids} 
 
 # ── Function 3: Power bounds of the EV pool ───────────────────────────────────
 def get_power_bounds(
     connection_df: pd.DataFrame,
     power_max_per_charger: dict[str, float],
+    per_charger: bool = False
 ) -> pd.DataFrame:
     """
     Compute power_min and power_max of the EV pool at every timestep.
@@ -124,13 +135,24 @@ def get_power_bounds(
     -------
     DataFrame with columns ['power_min', 'power_max'].
     """
-    power_df = connection_df.multiply(
-        pd.Series(power_max_per_charger), axis='columns'
-    )
-    power_min = power_df.sum(axis=1).rename('power_min') *-1
-    power_max = pd.Series(0, index=connection_df.index, name='power_max')
 
-    return pd.concat([power_min, power_max], axis=1)
+    if not per_charger:
+        power_df = connection_df.multiply(
+            pd.Series(power_max_per_charger), axis='columns'
+        )
+        power_min = power_df.sum(axis=1).rename('power_min') *-1
+        power_max = pd.Series(0, index=connection_df.index, name='power_max')
+
+        return pd.concat([power_min, power_max], axis=1)
+    
+    if per_charger:
+        out = {}
+        for cid in connection_df.columns:
+            p_max = power_max_per_charger.get(cid, 0.0)
+            out[f'power_min_{cid}'] = connection_df[cid] * p_max * -1
+            out[f'power_max_{cid}'] = pd.Series(0.0, index=connection_df.index)
+
+        return pd.DataFrame(out, index=connection_df.index)
 
 
 # ── Helper: Feasibility check & capacity adjustment ───────────────────────────
@@ -204,62 +226,67 @@ def get_e_in_out_capacity(
     power_sizes: dict[str, float],
     soc_rd_lower: float = 0.2,
     soc_rd_upper: float = 0.5,
-) -> pd.DataFrame:
+    per_charger: bool = False,
+) -> tuple[pd.DataFrame, list[float]]:
     """
-    Compute e_in and e_out for the EV pool at every 15-minute timestep.
-    Compute the energy capacity of the connected EV Pool
+    Compute e_in, e_out, and e_cap for the EV pool (or per charger) at every
+    15-minute timestep.
 
     - e_in  is placed at the arrival   timestep: energy the car brings into the system.
             e_in  = battery_size - kWh_charged
     - e_out is placed at the departure timestep: energy the car leaves with.
-            e_out = e_in + kiloWattHours charged during the session
-    - e_cap is the total energy capacity (max per timestep) of the entire pool that is connected
-
-    - include a controll function that checks if the random defined entry SoC (e_in) aligns with e_out (=e_in + kWh charged) and e_capacity
+            e_out = battery_size - buffer
+    - e_cap is the energy capacity per timestep (pool sum, or per charger).
 
     Parameters
     ----------
     sessions      : Prepared sessions DataFrame (output of prepare_sessions).
-    connection_df : Output of connection function with boolean if charger is connected of not
+    connection_df : Binary connection DataFrame (columns = charger_ids).
     idx           : Full 15-minute DatetimeIndex.
     battery_sizes : Dict mapping charger_id → battery capacity in kWh.
+    power_sizes   : Dict mapping charger_id → max charging power in kW.
     soc_rd_lower  : Lower bound of the random arriving SoC  (default 0.2).
     soc_rd_upper  : Upper bound of the random arriving SoC  (default 0.5).
+    per_charger   : If True, return one set of e_in/e_out/e_cap columns PER
+                    charger instead of pool-level aggregates.
 
     Returns
     -------
-    DataFrame with columns ['e_in', 'e_out'] indexed by idx.
+    (df, capped_kWh_list)
+        df : DataFrame with columns ['e_in', 'e_out', 'e_cap'] (pool mode)
+             or ['e_in_{cid}', 'e_out_{cid}', 'e_cap_{cid}', ...] (per-charger mode).
+        capped_kWh_list : list of kWh amounts capped due to power infeasibility.
     """
-    e_in  = pd.Series(0.0, index=idx, name='e_in')
-    e_out = pd.Series(0.0, index=idx, name='e_out')
-    e_cap = pd.Series(0.0, index=idx, name='e_cap')
-    
-    capacity_df = connection_df.multiply(
-        pd.Series(battery_sizes), axis='columns')
-    
-    # Drop sessions smaller 0.25 hours
+    charger_ids = connection_df.columns.tolist()
+
+    e_in  = {cid: pd.Series(0.0, index=idx) for cid in charger_ids}
+    e_out = {cid: pd.Series(0.0, index=idx) for cid in charger_ids}
+
+    capacity_df = connection_df.multiply(pd.Series(battery_sizes), axis='columns')
+
+    # Drop sessions smaller than 0.25 hours
     sessions = sessions[sessions['duration_hours'] > 0.5]
     capped_kWh_list = []
 
     for _, row in sessions.iterrows():
         cid     = row['chargerId']
         arrival = row['arrival_15min']
-        depart  = row['departure_15min'] - pd.Timedelta(minutes=15) # k-1 is needed to align e_out with the optimization variables soc_slot_end
-        batt    = battery_sizes.get(cid, 80)  # fallback to 80 kWh
+        depart  = row['departure_15min'] - pd.Timedelta(minutes=15)
+        batt    = battery_sizes.get(cid, 80)
+
+        if cid not in e_in:
+            continue  # session belongs to a charger not present in connection_df
 
         if arrival not in idx or depart not in idx:
             continue  # skip sessions outside the optimisation window
 
-        # Feasibility check: charging is possible during connected time 
         power_session = power_sizes.get(cid, 80)
         kWh_session = row['kiloWattHours']
-        time_delta_hours = (depart - arrival).total_seconds() / 3600 # value as hour
-        min_power_required = kWh_session / time_delta_hours
-        
+        time_delta_hours = (depart - arrival).total_seconds() / 3600
+
         if time_delta_hours > 0:
-            min_power_required = kWh_session / time_delta_hours  # kW
+            min_power_required = kWh_session / time_delta_hours
             if min_power_required > power_session:
-                # Cap kWh to what is physically deliverable within the session
                 kWh_session_new = power_session * time_delta_hours
                 logger.warning(
                     "Power infeasible for charger %s at [%s → %s]: "
@@ -269,31 +296,33 @@ def get_e_in_out_capacity(
                     min_power_required, power_session,
                     kWh_session, kWh_session_new,
                 )
-
-                # Append to list
                 capped_kWh_list.append(kWh_session - kWh_session_new)
                 kWh_session = kWh_session_new
 
-
-        # Focus on kWh per Session, start-, end- and e_cap are only relevant for the optimization to work smoothly
-        # assumption car will always be full when leaving
         session_e_in  = max(0.0, batt - kWh_session)
         session_e_out = batt - 0.1
 
-        
-        # session_e_in, session_e_out, capacity_df[cid] = check_feasibility_of_session(session_e_in, session_e_out, charger_cap_series) # not needed as restrictions can't be violated like this
-
-        e_in.loc[arrival] += session_e_in
-        e_out.loc[depart] += session_e_out
-
-    e_cap = capacity_df.sum(axis=1)
+        e_in[cid].loc[arrival]  += session_e_in
+        e_out[cid].loc[depart] += session_e_out
 
     kWh_capped = sum(capped_kWh_list)
-
     if kWh_capped > 0:
         logger.info(
             "Total kWh removed by power feasibility cap: %.2f kWh across %d sessions.",
             kWh_capped, len(capped_kWh_list),
         )
 
-    return pd.concat([e_in, e_out, e_cap], axis=1), capped_kWh_list
+    if per_charger:
+        out = {}
+        for cid in charger_ids:
+            out[f'e_in_{cid}']  = e_in[cid]
+            out[f'e_out_{cid}'] = e_out[cid]
+            out[f'e_cap_{cid}'] = capacity_df[cid]
+        return pd.DataFrame(out, index=idx), capped_kWh_list
+
+    # Pool-level aggregation (original behaviour)
+    e_in_total  = sum(e_in.values()).rename('e_in')
+    e_out_total = sum(e_out.values()).rename('e_out')
+    e_cap_total = capacity_df.sum(axis=1).rename('e_cap')
+
+    return pd.concat([e_in_total, e_out_total, e_cap_total], axis=1), capped_kWh_list

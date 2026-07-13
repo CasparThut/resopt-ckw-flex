@@ -35,156 +35,6 @@ mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=["#BCCF02", "#6C9C30", "#3E5C
 
 plt.rcParams['figure.constrained_layout.use'] = True # alternativ zu tight_layout(). noch testen sonst deaktivieren
 
-def plot_summary_bars(summary):
-    # Build series for each visual group
-    energy_keys = [
-        'Total Energy Charged [kWh]',
-        'Energy in Raw Sessions [kWh]',
-        'Energy Lost to Power Cap [kWh]',
-        'Energy Lost to Power Cap [%]'
-    ]
-    cost_keys = [
-        'Energy Costs Grid Opt [CHF]',
-        'Energy Costs ELV Opt [CHF]',
-        'Peak Costs Opt [CHF]',
-        'Total Optimized Costs [CHF]',
-        'Energy Costs Grid (flat tariff) [CHF]',
-        'Energy Costs ELV (flat tariff) [CHF]',
-        'Peak costs (flat tariff) [CHF]',
-        'Total costs (flat tariff) [CHF]'
-    ]
-    savings_keys = [
-        'Savings vs flat tariff (no peak costs for opt) [CHF]',
-        'Savings vs flat tariff (no peak costs for opt) [%]',
-        'Savings vs flat tariff (incl peak costs for opt) [CHF]',
-        'Savings vs flat tariff (incl peak costs for opt) [%]',
-        'Savings vs flat tariff (only energy) [CHF]',
-        'Savings vs flat tariff (only energy) [%]'
-    ]
-    price_keys = [
-        'Avg Charging Price Grid Opt [CHF/kWh]',
-        'Avg Charging Price ELV Opt [CHF/kWh]',
-        'Avg Charging Price Opt [CHF/kWh]',
-        'Avg Charging Price Grid Standard [CHF/kWh]',
-        'Avg Charging Price ELV Standard [CHF/kWh]',
-        'Avg Charging Price Standard [CHF/kWh]'
-    ]
-    load_keys = [
-        'Peak-to-Average Ratio [-]',
-        'Off-Peak Charging Share [%]',
-        'On-Peak  Charging Share [%]'
-    ]
-
-    def s(keys):
-        vals = [summary.get(k, np.nan) for k in keys]
-        return pd.Series(vals, index=keys)
-
-    ser_energy = s(energy_keys)
-    ser_costs  = s(cost_keys)
-    ser_savings = s(savings_keys)
-    ser_prices = s(price_keys)
-    ser_load = s(load_keys)
-
-    fig, axes = plt.subplots(3, 2, figsize=(14, 12), constrained_layout=True)
-    ax_e, ax_c, ax_s, ax_p, ax_l, ax_empty = axes.flat
-
-    # Energy
-    ser_e_plot = ser_energy.copy()
-    percent_mask = ser_e_plot.index.str.endswith('[%]')
-    colors = ['#6C9C30' if not pm else '#a7b805' for pm in percent_mask]
-    ax_e.bar(ser_e_plot.index.astype(str), ser_e_plot.values, color=colors, alpha=0.9)
-    ax_e.set_title('Energy overview')
-    ax_e.set_ylabel('kWh / % (last bar)')
-    ax_e.tick_params(axis='x', rotation=30)
-    for lbl in ax_e.get_xticklabels():
-        lbl.set_ha('right')   # set horizontal alignment for tick labels
-
-    # annotate energy bars
-    maxv = np.nanmax(np.abs(ser_e_plot.values)) if ser_e_plot.size else 0
-    for i, v in enumerate(ser_e_plot.values):
-        if np.isnan(v): continue
-        txt = f"{v:.2f}" if not percent_mask[i] else f"{v:.2f}%"
-        ax_e.text(i, v + maxv*0.02, txt, ha='center', va='bottom', fontsize=9)
-
-    # Costs
-    ser_c_plot = ser_costs.copy()
-    ax_c.bar(ser_c_plot.index.astype(str), ser_c_plot.values, color='#BCCF02', alpha=0.9)
-    ax_c.set_title('Costs (optimized vs flat)')
-    ax_c.set_ylabel('CHF')
-    ax_c.tick_params(axis='x', rotation=45)
-    for lbl in ax_c.get_xticklabels():
-        lbl.set_ha('right')
-
-    maxc = np.nanmax(np.abs(ser_c_plot.values)) if ser_c_plot.size else 0
-    for i, v in enumerate(ser_c_plot.values):
-        if np.isnan(v): continue
-        ax_c.text(i, v + maxc*0.01, f"{v:,.0f} CHF", ha='center', va='bottom', fontsize=8)
-
-    # Savings (CHF + %)
-    savings_chf_keys = [k for k in savings_keys if k.endswith('[CHF]')]
-    savings_pct_keys = [k for k in savings_keys if k.endswith('[%]')]
-    ser_s_chf = pd.Series([summary.get(k, np.nan) for k in savings_chf_keys], index=savings_chf_keys)
-    ser_s_pct = pd.Series([summary.get(k, np.nan) for k in savings_pct_keys], index=savings_pct_keys)
-
-    ax_s.bar(ser_s_chf.index.astype(str), ser_s_chf.values, color='#3E5C17', alpha=0.9, label='CHF')
-    ax_s.set_title('Savings (CHF & %)')
-    ax_s.set_ylabel('CHF')
-    ax_s.tick_params(axis='x', rotation=30)
-    for lbl in ax_s.get_xticklabels():
-        lbl.set_ha('right')
-
-    maxschf = np.nanmax(np.abs(ser_s_chf.values)) if ser_s_chf.size else 0
-    for i, v in enumerate(ser_s_chf.values):
-        if np.isnan(v): continue
-        ax_s.text(i, v + maxschf*0.01, f"{v:,.0f}", ha='center', va='bottom', fontsize=8)
-
-    if len(ser_s_pct) > 0:
-        ax_s2 = ax_s.twinx()
-        x_positions = np.arange(len(ser_s_pct))
-        ax_s2.bar(x_positions + 0.25, ser_s_pct.values, width=0.35, color='#DD8500', alpha=0.8, label='%')
-        ax_s2.set_ylabel('%')
-        maxspct = np.nanmax(np.abs(ser_s_pct.values)) if ser_s_pct.size else 0
-        for i, v in enumerate(ser_s_pct.values):
-            if np.isnan(v): continue
-            ax_s2.text(i + 0.25, v + maxspct*0.01, f"{v:.1f}%", ha='center', va='bottom', fontsize=8)
-
-    ax_s.legend(loc='upper left')
-
-    # Prices
-    ser_p = ser_prices.copy()
-    colors_p = ['#BCCF02','#6C9C30','#3E5C17','#a7b805','#9fb230','#7a9b2a']
-    ax_p.bar(ser_p.index.astype(str), ser_p.values, color=colors_p[:len(ser_p)], alpha=0.95)
-    ax_p.set_title('Average Prices [CHF/kWh]')
-    ax_p.set_ylabel('CHF/kWh')
-    ax_p.tick_params(axis='x', rotation=45)
-    for lbl in ax_p.get_xticklabels():
-        lbl.set_ha('right')
-    maxp = np.nanmax(np.abs(ser_p.values)) if ser_p.size else 0
-    for i, v in enumerate(ser_p.values):
-        if np.isnan(v): continue
-        ax_p.text(i, v + maxp*0.01, f"{v:.3f}", ha='center', va='bottom', fontsize=8)
-
-    # Load profile quality
-    ser_l = ser_load.copy()
-    ax_l.bar(ser_l.index.astype(str), ser_l.values, color=['#6C9C30','#BCCF02','#a7b805'], alpha=0.9)
-    ax_l.set_title('Load profile quality')
-    ax_l.tick_params(axis='x', rotation=15)
-    for lbl in ax_l.get_xticklabels():
-        lbl.set_ha('right')
-    maxl = np.nanmax(np.abs(ser_l.values)) if ser_l.size else 0
-    for i, v in enumerate(ser_l.values):
-        if np.isnan(v): continue
-        suffix = '%' if ser_l.index[i].endswith('[%]') else ''
-        ax_l.text(i, v + maxl*0.01, f"{v}{suffix}", ha='center', va='bottom', fontsize=8)
-    ax_l.set_ylabel('Value')
-
-    ax_empty.axis('off')
-    ax_empty.text(0.02, 0.9, 'Summary visualization\nEnergy | Costs | Savings | Prices | Load', fontsize=12, color='#616161')
-
-    plt.suptitle("Optimization Summary — grouped KPIs", fontsize=16)
-    plt.show()
-
-
 
 
 def plot_charger_usage(easee_sessions, df_energy, idx, connection_df, sessions=None, session_kWh_col='kiloWattHours'):
@@ -337,6 +187,7 @@ def compute_ev_optimization_summary(
     peak_power_price_stat: float = 1.5,
     energy_costs: float = 0.11,
     fix_costs: float = 0.07226,
+    EV_opt_name: str = None,
 ) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame]:
     """
     Compute post-processing metrics for EV charging optimization.
@@ -381,11 +232,6 @@ def compute_ev_optimization_summary(
     mean_costs_tariff = df_ev_inputs['dyn_tarif'].mean()
     fixed_grid_costs = mean_costs_tariff
 
-    # Post-processing: prepare results indexed by Timestamp
-    df_results = df_results.copy()
-    df_results['Timestamp'] = idx
-    df_results = df_results.drop(columns=['timestamp'], errors='ignore')
-    df_results = df_results.set_index('Timestamp')
 
     # Time series df
     df = pd.DataFrame(index=idx)
@@ -456,6 +302,30 @@ def compute_ev_optimization_summary(
     involved_chargers = sessions['charger_id'].unique()
     number_of_chargers = len(involved_chargers)
 
+    # ──SoC Violations ────────────────────
+    number_of_soc_violations = None
+
+    if EV_opt_name is not None:
+        min_energy_violations = f'{EV_opt_name}__var_min_energy_violation'
+        max_energy_violations = f'{EV_opt_name}__var_max_energy_violation'
+        n_violations = 0
+
+        if min_energy_violations in df_results.columns:
+            series_min = df_results[min_energy_violations]
+            
+            tot_min_energy_viol = sum(series_min)
+            
+            n_min_energy_viol = series_min != 0
+            n_violations += n_min_energy_viol.sum()
+        if max_energy_violations in df_results.columns:
+            series_max = df_results[max_energy_violations]
+            
+            tot_max_energy_viol = sum(series_max)
+
+            n_max_energy_viol = series_max != 0
+            n_violations += n_max_energy_viol.sum()
+
+
     # 9. Summary
     summary = {
         # Energy
@@ -474,13 +344,6 @@ def compute_ev_optimization_summary(
         'Energy Costs ELV (flat tariff) [CHF]': round(energy_costs_elv_stand, 2),
         'Peak costs (flat tariff) [CHF]'       : round(total_peak_costs_stand, 2),
         'Total costs (flat tariff) [CHF]'      : round(total_costs_stand, 2),
-
-        # 'Savings vs flat tariff (no peak costs for opt) [CHF]': round(savings_opt_rl, 2),
-        # 'Savings vs flat tariff (no peak costs for opt) [%]': round(savings_opt_rl_pct, 2),
-        # 'Savings vs flat tariff (incl peak costs for opt) [CHF]': round(savings_opt_incl_peak, 2),
-        # 'Savings vs flat tariff (incl peak costs for opt) [%]': round(savings_opt_incl_peak_pct, 2),
-        # 'Savings vs flat tariff (only energy) [CHF]': round(savings_opt_energy, 2),
-        # 'Savings vs flat tariff (only energy) [%]': round(savings_opt_energy_pct, 2),
 
         # Prices
         'Avg Charging Price Grid Opt [CHF/kWh]': round(avg_energy_grid_price_opt, 5),
@@ -505,6 +368,9 @@ def compute_ev_optimization_summary(
         'First Session' : first_session,
         'Last Session':last_session,
         'Average kWh per Session':average_kWh_session,
+        'Number of SoC violations': n_violations,
+        'Total Energy of min SoC violations': round(tot_min_energy_viol,5),
+        'Total Energy of max SoC violations': round(tot_max_energy_viol,5)
     }
 
     # Monthly breakdown
@@ -548,14 +414,7 @@ def print_summary(summary: dict):
         'Fix Costs (Abgaben etc.) [CHF]',
         'Total costs (flat tariff) [CHF]'
     ]
-    # savings_keys = [
-    #     'Savings vs flat tariff (no peak costs for opt) [CHF]',
-    #     'Savings vs flat tariff (no peak costs for opt) [%]',
-    #     'Savings vs flat tariff (incl peak costs for opt) [CHF]',
-    #     'Savings vs flat tariff (incl peak costs for opt) [%]',
-    #     'Savings vs flat tariff (only energy) [CHF]',
-    #     'Savings vs flat tariff (only energy) [%]'
-    # ]
+
     price_keys = [
         'Avg Charging Price Grid Opt [CHF/kWh]',
         'Avg Charging Price ELV Opt [CHF/kWh]',
@@ -578,7 +437,10 @@ def print_summary(summary: dict):
         'Sessions',
         'First Session',
         'Last Session',
-        'Average kWh per Session']
+        'Average kWh per Session',
+        'Number of SoC violations',
+        'Total Energy of min SoC violations',
+        'Total Energy of max SoC violations']
 
     def fmt(val, key):
         # None or nan

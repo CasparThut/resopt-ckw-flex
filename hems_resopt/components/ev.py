@@ -259,7 +259,6 @@ class EV(Battery):
                 )
 
 
-                # TODO: WHY SOFT CONSTRAINTS?!
                 # soft min soc constraints
                 constraints.append(
                     self.var_soc_slot_start[k] + (self.var_soc_min_soft_violation[k] / self.inputs.energy_capacity[k])
@@ -291,20 +290,6 @@ class EV(Battery):
                 constraints.append(self.var_energy_reserve_up_slot_end[k] == 0.0)
                 constraints.append(self.var_energy_reserve_down_slot_start[k] == 0.0)
                 constraints.append(self.var_energy_reserve_down_slot_end[k] == 0.0)
-
-        # NEW:
-        # at the last time steps of a session the soc target has to be reached
-        # every session end is when ev_availability goes from 1 to 0
-        # for k in self.horizon[:-1]:
-        #     if self.inputs.power_max[k] != 0 and self.inputs.power_max[k+1] == 0:
-        #         constraints.append(
-        #             self.var_soc_slot_end[k] == self.inputs.soc_target[k] if isinstance(self.inputs.soc_target, list) else self.inputs.soc_target
-        #         )
-                
-        # # Handle the very last timestep of the horizon, if EV is available it soc target has to be at last step
-        # if self.inputs.power_max[self.horizon[-1]] != 0:
-        #     last_target = self.inputs.soc_target[-1] if isinstance(self.inputs.soc_target, list) else self.inputs.soc_target
-        #     constraints.append(self.var_soc_slot_end[self.horizon[-1]] == last_target)
 
 
         return constraints
@@ -361,8 +346,6 @@ class EV(Battery):
         ]
 
         return constraints
-
-        # get_constraints now not called anymore since we don't change anything there (only in get_constraints_soc we make the changes)
 
 
 class EV_old(Asset, SocManagementInterface, ReserveProviderInterface):
