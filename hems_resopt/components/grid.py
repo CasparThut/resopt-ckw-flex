@@ -56,11 +56,11 @@ class GridPeakShave(GridWithFees):
 
     def __init__(
         self,
+        power_max: (float | list[float]),
+        power_min: (float | list[float]),
         assets: list[Asset] | None = None,
         markets: list[EnergyMarket] | None = None,
         name: str | None = None,
-        power_max: (float | list[float]) | None = None,
-        power_min: (float | list[float]) | None = None,
         fee_import: (float | list[float]) | None = None,
         fee_export: (float | list[float]) | None = None,
         ramp_step_allowed: (float | list[float]) | None = None,
