@@ -54,6 +54,8 @@ secrets.json
 **/data/
 data/**
 
+notebooks/*.png
+
 # Common data file formats (CSV, parquet, Feather, HDF5, SQLite, zip, tar, gz)
 *.csv
 *.parquet

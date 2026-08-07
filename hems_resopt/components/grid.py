@@ -5,7 +5,7 @@ import pyomo.environ as pyo
 from res_opt_core.core.components.base import Asset
 from res_opt_core.core.components.energy_markets import EnergyMarket
 from res_opt_core.core.utils.time_resolution import MarketTimeUnit, TimeBlocks
-from res_opt_core.valuator.components.grid import GridWithFees, GridWithFeesInputs
+from res_opt_core.valuations.components.grid import GridWithFees, GridWithFeesInputs
 
 
 class GridPeakShaveInputs(GridWithFeesInputs):
@@ -28,7 +28,7 @@ class GridPeakShaveInputs(GridWithFeesInputs):
     """
 
     name: str = "grid_peak_shave"
-    peak_power_price: float = 10000.0
+    peak_power_price: float | None = 10000.0
     time_horizon_peak: MarketTimeUnit | Literal[
         "month_naive",
         "month_daylight_saving",
@@ -66,9 +66,8 @@ class GridPeakShave(GridWithFees):
         ramp_step_allowed: (float | list[float]) | None = None,
         ramp_rate_allowed: (float | list[float]) | None = None,
         ramp_imbalance_price_curve: float | list[float] = 0.0,
-        peak_power_price: float | None = None,
-        time_horizon_peak: MarketTimeUnit
-        | Literal["month_naive", "month_daylight_saving", "day_naive", "day_daylight_saving"] = MarketTimeUnit.MONTH_NAIVE,
+        peak_power_price: float | None = 10000.0,
+        time_horizon_peak: MarketTimeUnit | Literal["month_naive", "month_daylight_saving", "day_naive", "day_daylight_saving"] = MarketTimeUnit.MONTH_NAIVE,
     ):
         """Initializes the GridPeakShave component.
 
@@ -100,13 +99,9 @@ class GridPeakShave(GridWithFees):
             ramp_step_allowed=ramp_step_allowed,
             ramp_rate_allowed=ramp_rate_allowed,
             ramp_imbalance_price_curve=ramp_imbalance_price_curve,
-            # peak_power_price=peak_power_price,
-            # time_horizon_peak=time_horizon_peak,
+            peak_power_price=peak_power_price,
+            time_horizon_peak=time_horizon_peak,
         )
-
-        if peak_power_price is not None:
-            self.inputs.peak_power_price = peak_power_price
-        self.inputs.time_horizon_peak = time_horizon_peak
 
     def init_variables(self) -> None:
         """Initializes the peak power variables for the GridPeakShave component.
@@ -157,10 +152,10 @@ class GridPeakShave(GridWithFees):
 
     def add_objectives(self, objectives: list[float | pyo.Expression]) -> None:
         super().add_objectives(objectives)
-        
+
         # use TimeBlocks to identify the first timestep of each block
         time_blocks = TimeBlocks(market_time_unit=self.inputs.time_horizon_peak)
-        blocks = time_blocks._group(self.timestamp)
+        blocks = time_blocks._group(self.timestamp)  # TODO: use public method instead of private method
 
         for block_indices in blocks.values():
             # all timesteps in the block share the same var_peak_power value
